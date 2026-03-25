@@ -134,7 +134,7 @@ df_filtered = df[
 # HEADER
 # =============================================
 "# \U0001F331 Bean Sprout Growth Dashboard"
-"Effect of Coloured Light (Blue vs Green) on Mung Bean Sprout Growth | CID: 06043088"
+"Effect of Coloured Light (Blue vs Green) on Mung Bean Sprout Growth"
 ""
 
 # --- Summary metrics ---
@@ -147,6 +147,48 @@ met_cols[3].metric("Blue Est. Length", f"{df['Blue_Length'].iloc[-1]:.1f} cm")
 met_cols[4].metric("Control Est. Length", f"{df['Control_Length'].iloc[-1]:.1f} cm")
 
 ""
+
+# --- Notifications ---
+_notifications = []
+
+# Harvestability alerts
+for ch in ["Green", "Blue", "Control"]:
+    harv = df[f"{ch}_Harvestability"].iloc[-1]
+    full = df[df[f"{ch}_Harvestability"] >= 100]
+    if len(full) > 0:
+        _notifications.append(("success", f"\U0001F33F **{ch}** is harvestable! Reached 100% on {full['Timestamp'].iloc[0].strftime('%b %d at %H:%M')}."))
+    elif harv >= 80:
+        _notifications.append(("warning", f"\U0001F331 **{ch}** is at {harv:.0f}% harvestability \u2014 almost ready for harvest."))
+
+# Temperature alerts
+temp_now = df["Temp(C)"].iloc[-1]
+temp_mean = df["Temp(C)"].mean()
+temp_std = df["Temp(C)"].std()
+if temp_now < temp_mean - 2 * temp_std:
+    _notifications.append(("error", f"\U0001F321\uFE0F Temperature is unusually low: **{temp_now:.1f}\u00b0C** (avg: {temp_mean:.1f}\u00b0C)."))
+elif temp_now > temp_mean + 2 * temp_std:
+    _notifications.append(("warning", f"\U0001F321\uFE0F Temperature is unusually high: **{temp_now:.1f}\u00b0C** (avg: {temp_mean:.1f}\u00b0C)."))
+
+# Humidity alerts
+hum_now = df["Humidity(%)"].iloc[-1]
+hum_mean = df["Humidity(%)"].mean()
+hum_std = df["Humidity(%)"].std()
+if hum_now < hum_mean - 2 * hum_std:
+    _notifications.append(("error", f"\U0001F4A7 Humidity is unusually low: **{hum_now:.1f}%** (avg: {hum_mean:.1f}%). Consider watering."))
+elif hum_now > hum_mean + 2 * hum_std:
+    _notifications.append(("warning", f"\U0001F4A7 Humidity is unusually high: **{hum_now:.1f}%** (avg: {hum_mean:.1f}%)."))
+
+if _notifications:
+    with st.container(border=True):
+        "\U0001F514 **Notifications**"
+        for level, msg in _notifications:
+            if level == "success":
+                st.success(msg)
+            elif level == "warning":
+                st.warning(msg)
+            elif level == "error":
+                st.error(msg)
+    ""
 
 # =============================================
 # HARVESTABILITY
