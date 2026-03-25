@@ -19,90 +19,29 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- Custom CSS for modern plant-themed UI ---
-st.markdown("""
-<style>
-    /* Main background */
-    .stApp {
-        background: linear-gradient(180deg, #f0f7f0 0%, #e8f5e9 50%, #f1f8e9 100%);
-    }
-    /* Sidebar */
-    section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #1b5e20 0%, #2e7d32 50%, #388e3c 100%);
-    }
-    section[data-testid="stSidebar"] * {
-        color: #e8f5e9 !important;
-    }
-    /* Fix button text visibility in sidebar */
-    section[data-testid="stSidebar"] button,
-    section[data-testid="stSidebar"] button * ,
-    section[data-testid="stSidebar"] button p,
-    section[data-testid="stSidebar"] button span,
-    section[data-testid="stSidebar"] .stButton button,
-    section[data-testid="stSidebar"] .stButton button * {
-        color: #1b5e20 !important;
-        background-color: #e8f5e9 !important;
-        border-color: #a5d6a7 !important;
-    }
-    section[data-testid="stSidebar"] button:hover,
-    section[data-testid="stSidebar"] button:hover * {
-        background-color: #c8e6c9 !important;
-        color: #1b5e20 !important;
-    }
-    section[data-testid="stSidebar"] .stSelectbox label,
-    section[data-testid="stSidebar"] .stRadio label,
-    section[data-testid="stSidebar"] .stCheckbox label {
-        color: #c8e6c9 !important;
-    }
-    /* Headers */
-    h1, h2, h3 {
-        color: #1b5e20 !important;
-    }
-    /* Metric cards */
-    [data-testid="stMetric"] {
-        background: white;
-        border-radius: 12px;
-        padding: 16px;
-        box-shadow: 0 2px 8px rgba(27,94,32,0.1);
-        border-left: 4px solid #4caf50;
-    }
-    [data-testid="stMetricLabel"] {
-        color: #2e7d32 !important;
-    }
-    /* Info boxes */
-    .stAlert {
-        border-radius: 10px;
-    }
-    /* Plotly charts container */
-    .stPlotlyChart {
-        background: white;
-        border-radius: 12px;
-        padding: 8px;
-        box-shadow: 0 2px 8px rgba(27,94,32,0.08);
-    }
-    /* Tabs */
-    .stTabs [data-baseweb="tab"] {
-        color: #2e7d32;
-    }
-    .stTabs [aria-selected="true"] {
-        border-bottom-color: #4caf50 !important;
-    }
-    /* Expander */
-    .streamlit-expanderHeader {
-        color: #2e7d32 !important;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Green gradient sidebar
+st.markdown("""<style>
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #1b5e20 0%, #2e7d32 40%, #43a047 100%);
+}
+section[data-testid="stSidebar"] * { color: #e8f5e9 !important; }
+section[data-testid="stSidebar"] button,
+section[data-testid="stSidebar"] button * { color: #1b5e20 !important; background: #e8f5e9 !important; }
+section[data-testid="stSidebar"] button:hover,
+section[data-testid="stSidebar"] button:hover * { background: #c8e6c9 !important; }
+</style>""", unsafe_allow_html=True)
 
 # --- Configuration ---
 SHEET_ID = "1Vkc24L-VDzpiR6GrKL9sg7BJ5h5271bmTEASLvmzD9M"
 SHEET_TAB = "data"
 GSHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={SHEET_TAB}"
 
-# Harvestability thresholds (from manual observation)
 HARVEST_THRESH = {'Green': 3700, 'Blue': 4000, 'Control': 4000}
-MAX_LENGTH = 30.0       # cm, observed max
-THRESHOLD_LENGTH = 10.0  # cm, length at 100% harvestability
+MAX_LENGTH = 30.0
+THRESHOLD_LENGTH = 10.0
+COLORS = {"Green": "#2ca02c", "Blue": "#1f77b4", "Control": "#636363"}
+PLOT_TEMPLATE = "plotly_white"
+
 
 # --- Data Loading ---
 @st.cache_data(ttl=300)
@@ -118,14 +57,13 @@ def load_data():
     df["Timestamp"] = pd.to_datetime(df["Timestamp"], format="mixed", dayfirst=True)
     df = df.sort_values("Timestamp").reset_index(drop=True)
 
-    # Clean anomalies (simultaneous drops across all 3 channels)
+    # Clean anomalies
     diff_g = df["Green"].diff().abs()
     diff_b = df["Blue"].diff().abs()
     diff_c = df["Control"].diff().abs()
     anomaly_mask = (diff_g > 200) & (diff_b > 200) & (diff_c > 200)
-    anomaly_indices = set(df.index[anomaly_mask].tolist())
     to_remove = set()
-    for idx in anomaly_indices:
+    for idx in df.index[anomaly_mask].tolist():
         to_remove.add(idx)
         if idx > 0:
             to_remove.add(idx - 1)
@@ -135,209 +73,217 @@ def load_data():
         df_clean.loc[idx, ["Green", "Blue", "Control"]] = np.nan
     df_clean[["Green", "Blue", "Control"]] = df_clean[["Green", "Blue", "Control"]].interpolate(method="linear")
 
-    # Derived columns
     df_clean["Elapsed_hours"] = (df_clean["Timestamp"] - df_clean["Timestamp"].iloc[0]).dt.total_seconds() / 3600
     df_clean["Date"] = df_clean["Timestamp"].dt.date
-
-    # Compute baselines
     baselines = {ch: df_clean[ch].iloc[:10].mean() for ch in ["Green", "Blue", "Control"]}
 
     # Harvestability
     for ch in ["Green", "Blue", "Control"]:
-        bl = baselines[ch]
-        thresh = HARVEST_THRESH[ch]
-        df_clean[f"{ch}_Harvestability"] = ((df_clean[ch] - bl) / (thresh - bl) * 100).clip(0, 100)
+        df_clean[f"{ch}_Harvestability"] = (
+            (df_clean[ch] - baselines[ch]) / (HARVEST_THRESH[ch] - baselines[ch]) * 100
+        ).clip(0, 100)
 
-    # Plant length estimation — constant linear rate from start
+    # Plant length — constant linear rate
     for ch in ["Green", "Blue", "Control"]:
-        thresh = HARVEST_THRESH[ch]
-        crossed = df_clean[df_clean[ch] >= thresh]
-
+        crossed = df_clean[df_clean[ch] >= HARVEST_THRESH[ch]]
         if len(crossed) > 0:
-            first_cross_idx = crossed.index[0]
-            n_points_to_threshold = first_cross_idx + 1  # 0-based index, so +1
-            rate = THRESHOLD_LENGTH / n_points_to_threshold  # constant cm/point
+            n = crossed.index[0] + 1
+            rate = THRESHOLD_LENGTH / n
             df_clean[f"{ch}_Length"] = [(i + 1) * rate for i in range(len(df_clean))]
             df_clean[f"{ch}_Length"] = df_clean[f"{ch}_Length"].clip(upper=MAX_LENGTH)
         else:
             df_clean[f"{ch}_Length"] = df_clean[f"{ch}_Harvestability"] / 100.0 * THRESHOLD_LENGTH
 
-    return df, df_clean, to_remove, data_source, baselines
+    return df, df_clean, data_source, baselines
 
 
-df_raw, df, anomalies, data_source, baselines = load_data()
-
-# --- Sidebar ---
-st.sidebar.markdown("## \U0001F331 Controls")
-st.sidebar.caption(f"Data: {data_source}")
-if st.sidebar.button("\U0001F504 Refresh Data"):
-    st.cache_data.clear()
-    st.rerun()
-
-view_mode = st.sidebar.radio(
-    "View",
-    ["Harvestability", "Plant Length", "Environmental", "Correlation & Stats"]
-)
-
-show_raw = st.sidebar.checkbox("Show raw data (before cleaning)", False)
-
-time_range = st.sidebar.slider(
-    "Time Range (hours from start)",
-    min_value=0.0,
-    max_value=float(df["Elapsed_hours"].max()),
-    value=(0.0, min(170.0, float(df["Elapsed_hours"].max()))),
-    step=1.0
-)
-
-df_filtered = df[(df["Elapsed_hours"] >= time_range[0]) & (df["Elapsed_hours"] <= time_range[1])].copy()
-
-# --- Header ---
-st.markdown("# \U0001F331 Bean Sprout Growth Dashboard")
-st.caption("Effect of Coloured Light (Blue vs Green) on Mung Bean Sprout Growth | CID: 06043088")
-
-# --- Metrics Row ---
-col1, col2, col3, col4, col5 = st.columns(5)
-duration = df["Timestamp"].max() - df["Timestamp"].min()
-col1.metric("Duration", f"{duration.days}d {duration.seconds // 3600}h")
-col2.metric("Data Points", f"{len(df):,}")
-col3.metric("Green Est. Length", f"{df['Green_Length'].iloc[-1]:.1f} cm")
-col4.metric("Blue Est. Length", f"{df['Blue_Length'].iloc[-1]:.1f} cm")
-col5.metric("Control Est. Length", f"{df['Control_Length'].iloc[-1]:.1f} cm")
-
-PLOT_TEMPLATE = "plotly_white"
-COLORS = {"Green": "#2ca02c", "Blue": "#1f77b4", "Control": "#555555"}
+df_raw, df, data_source, baselines = load_data()
 
 # =============================================
-# HARVESTABILITY VIEW (Main)
+# SIDEBAR
+# =============================================
+with st.sidebar:
+    st.title("\U0001F331 Welcome!")
+    ""
+    st.caption(f"Data source: {data_source}")
+    if st.button("Refresh Data"):
+        st.cache_data.clear()
+        st.rerun()
+
+    ""
+    view_mode = st.radio(
+        "View",
+        ["Harvestability", "Plant Length", "Environmental", "Correlation & Stats"],
+    )
+    ""
+    show_raw = st.checkbox("Show raw data (before cleaning)", False)
+    ""
+    time_range = st.slider(
+        "Time range (hours)",
+        min_value=0.0,
+        max_value=float(df["Elapsed_hours"].max()),
+        value=(0.0, min(170.0, float(df["Elapsed_hours"].max()))),
+        step=1.0,
+    )
+
+df_filtered = df[
+    (df["Elapsed_hours"] >= time_range[0]) & (df["Elapsed_hours"] <= time_range[1])
+].copy()
+
+# =============================================
+# HEADER
+# =============================================
+"# \U0001F331 Bean Sprout Growth Dashboard"
+"Effect of Coloured Light (Blue vs Green) on Mung Bean Sprout Growth | CID: 06043088"
+""
+
+# --- Summary metrics ---
+duration = df["Timestamp"].max() - df["Timestamp"].min()
+met_cols = st.columns(5, gap="medium")
+met_cols[0].metric("Duration", f"{duration.days}d {duration.seconds // 3600}h")
+met_cols[1].metric("Data Points", f"{len(df):,}")
+met_cols[2].metric("Green Est. Length", f"{df['Green_Length'].iloc[-1]:.1f} cm")
+met_cols[3].metric("Blue Est. Length", f"{df['Blue_Length'].iloc[-1]:.1f} cm")
+met_cols[4].metric("Control Est. Length", f"{df['Control_Length'].iloc[-1]:.1f} cm")
+
+""
+
+# =============================================
+# HARVESTABILITY
 # =============================================
 if view_mode == "Harvestability":
-    st.subheader("Harvestability Analysis")
-    st.markdown(
-        "A sprout is **100% harvestable** when the sensor reaches: "
-        "**Blue/Control \u2265 4000** ADC, **Green \u2265 3700** ADC (based on manual observation)."
-    )
+    "## Harvestability Analysis"
+    "A sprout is **100% harvestable** when the sensor reaches: **Blue/Control \u2265 4000** ADC, **Green \u2265 3700** ADC."
+    ""
 
-    fig = go.Figure()
-    for ch in ["Green", "Blue", "Control"]:
-        fig.add_trace(go.Scatter(
-            x=df_filtered["Timestamp"], y=df_filtered[f"{ch}_Harvestability"],
-            name=ch, line=dict(color=COLORS[ch], width=1.5)
-        ))
-    fig.add_hline(y=100, line_dash="dash", line_color="red", annotation_text="100% Harvestable")
-    fig.update_layout(
-        height=500, template=PLOT_TEMPLATE,
-        title="Harvestability Over Time",
-        yaxis_title="Harvestability (%)",
-        yaxis_range=[-5, 115]
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    with st.container(border=True):
+        fig = go.Figure()
+        for ch in ["Green", "Blue", "Control"]:
+            fig.add_trace(go.Scatter(
+                x=df_filtered["Timestamp"], y=df_filtered[f"{ch}_Harvestability"],
+                name=ch, line=dict(color=COLORS[ch], width=1.5),
+            ))
+        fig.add_hline(y=100, line_dash="dash", line_color="red", annotation_text="100% Harvestable")
+        fig.update_layout(
+            height=450, template=PLOT_TEMPLATE, margin=dict(t=40, b=40),
+            yaxis_title="Harvestability (%)", yaxis_range=[-5, 115],
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-    # Gauge widgets showing all chambers reached 100%
-    st.markdown("#### Chamber Status")
-    gauge_cols = st.columns(3)
+    ""
+    "### Chamber Status"
+
+    gauge_cols = st.columns(3, gap="medium")
     chamber_names = {"Green": "Green Light", "Blue": "Blue Light", "Control": "Control (Dark)"}
-    gauge_colors = {"Green": "#2ca02c", "Blue": "#1f77b4", "Control": "#555555"}
 
     for i, ch in enumerate(["Green", "Blue", "Control"]):
         full = df_filtered[df_filtered[f"{ch}_Harvestability"] >= 100]
         first_100_str = full["Timestamp"].iloc[0].strftime("%b %d, %H:%M") if len(full) > 0 else "Not yet"
+        val = 100.0 if len(full) > 0 else df_filtered[f"{ch}_Harvestability"].iloc[-1]
 
-        fig_gauge = go.Figure(go.Indicator(
+        fig_g = go.Figure(go.Indicator(
             mode="gauge+number",
-            value=100 if len(full) > 0 else df_filtered[f"{ch}_Harvestability"].iloc[-1],
+            value=val,
             number={"suffix": "%"},
-            title={"text": f"{chamber_names[ch]}<br><span style='font-size:0.7em;color:gray'>First 100%: {first_100_str}</span>"},
+            title={"text": f"{chamber_names[ch]}<br><span style='font-size:0.75em;color:#666'>First 100%: {first_100_str}</span>"},
             gauge={
-                "axis": {"range": [0, 100], "tickwidth": 1},
-                "bar": {"color": gauge_colors[ch]},
-                "bgcolor": "#f0f0f0",
+                "axis": {"range": [0, 100], "tickwidth": 1, "dtick": 25},
+                "bar": {"color": COLORS[ch]},
+                "bgcolor": "#eee",
                 "steps": [
-                    {"range": [0, 50], "color": "#fff3e0"},
-                    {"range": [50, 80], "color": "#ffe0b2"},
+                    {"range": [0, 50], "color": "#f5f5f5"},
+                    {"range": [50, 80], "color": "#e8f5e9"},
                     {"range": [80, 100], "color": "#c8e6c9"},
                 ],
-                "threshold": {
-                    "line": {"color": "red", "width": 3},
-                    "thickness": 0.8,
-                    "value": 100
-                }
-            }
+                "threshold": {"line": {"color": "red", "width": 3}, "thickness": 0.8, "value": 100},
+            },
         ))
-        fig_gauge.update_layout(height=250, margin=dict(t=80, b=20, l=30, r=30))
+        fig_g.update_layout(height=220, margin=dict(t=70, b=10, l=30, r=30))
         with gauge_cols[i]:
-            st.plotly_chart(fig_gauge, use_container_width=True)
+            with st.container(border=True):
+                st.plotly_chart(fig_g, use_container_width=True)
 
 # =============================================
-# PLANT LENGTH VIEW
+# PLANT LENGTH
 # =============================================
 elif view_mode == "Plant Length":
-    st.subheader("Estimated Plant Length")
-    st.markdown(
-        "Length estimated from sensor data: **10 cm** at harvestability threshold, "
-        "then linear growth capped at **30 cm** (manual observation on 24 March)."
-    )
+    "## Estimated Plant Length"
+    "Length estimated from sensor data: **10 cm** at harvestability threshold, linear growth capped at **30 cm**."
+    ""
 
-    fig = go.Figure()
-    for ch in ["Green", "Blue", "Control"]:
-        fig.add_trace(go.Scatter(
-            x=df_filtered["Timestamp"], y=df_filtered[f"{ch}_Length"],
-            name=ch, line=dict(color=COLORS[ch], width=2)
-        ))
-    fig.add_hline(y=10, line_dash="dash", line_color="orange", annotation_text="Threshold (10 cm)")
-    fig.add_hline(y=30, line_dash="dash", line_color="red", annotation_text="Max (30 cm)")
-    fig.update_layout(
-        height=500, template=PLOT_TEMPLATE,
-        title="Estimated Bean Sprout Length Over Time",
-        yaxis_title="Length (cm)",
-        yaxis_range=[-1, 33]
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    with st.container(border=True):
+        fig = go.Figure()
+        for ch in ["Green", "Blue", "Control"]:
+            fig.add_trace(go.Scatter(
+                x=df_filtered["Timestamp"], y=df_filtered[f"{ch}_Length"],
+                name=ch, line=dict(color=COLORS[ch], width=2),
+            ))
+        fig.add_hline(y=10, line_dash="dash", line_color="orange", annotation_text="Threshold (10 cm)")
+        fig.add_hline(y=30, line_dash="dash", line_color="red", annotation_text="Max (30 cm)")
+        fig.update_layout(
+            height=450, template=PLOT_TEMPLATE, margin=dict(t=40, b=40),
+            yaxis_title="Estimated Length (cm)", yaxis_range=[-1, 33],
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-    # Summary — estimated length only
-    cols = st.columns(3)
+    ""
+    length_cols = st.columns(3, gap="medium")
     for i, ch in enumerate(["Green", "Blue", "Control"]):
-        with cols[i]:
-            st.metric(f"{ch} — Current Estimated Length", f"{df_filtered[f'{ch}_Length'].iloc[-1]:.1f} cm")
+        with length_cols[i]:
+            st.metric(f"{ch} \u2014 Current Estimated Length", f"{df_filtered[f'{ch}_Length'].iloc[-1]:.1f} cm")
 
 # =============================================
-# ENVIRONMENTAL VIEW
+# ENVIRONMENTAL
 # =============================================
 elif view_mode == "Environmental":
-    st.subheader("Environmental Conditions")
+    "## Environmental Conditions"
+    ""
 
-    fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True,
-        subplot_titles=("Temperature (\u00b0C)", "Humidity (%)"),
-        vertical_spacing=0.1
-    )
+    left, right = st.columns([3, 1], gap="medium")
 
-    fig.add_trace(go.Scatter(
-        x=df_filtered["Timestamp"], y=df_filtered["Temp(C)"],
-        name="Temperature", line=dict(color="#d62728"), fill="tozeroy",
-        fillcolor="rgba(214,39,40,0.1)"
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=df_filtered["Timestamp"], y=df_filtered["Humidity(%)"],
-        name="Humidity", line=dict(color="#17becf"), fill="tozeroy",
-        fillcolor="rgba(23,190,207,0.1)"
-    ), row=2, col=1)
-    fig.update_layout(height=500, template=PLOT_TEMPLATE)
-    st.plotly_chart(fig, use_container_width=True)
+    with left:
+        with st.container(border=True):
+            fig = make_subplots(
+                rows=2, cols=1, shared_xaxes=True,
+                subplot_titles=("Temperature (\u00b0C)", "Humidity (%)"),
+                vertical_spacing=0.12,
+            )
+            fig.add_trace(go.Scatter(
+                x=df_filtered["Timestamp"], y=df_filtered["Temp(C)"],
+                name="Temperature", line=dict(color="#d62728"),
+                fill="tozeroy", fillcolor="rgba(214,39,40,0.08)",
+            ), row=1, col=1)
+            fig.add_trace(go.Scatter(
+                x=df_filtered["Timestamp"], y=df_filtered["Humidity(%)"],
+                name="Humidity", line=dict(color="#17becf"),
+                fill="tozeroy", fillcolor="rgba(23,190,207,0.08)",
+            ), row=2, col=1)
+            fig.update_layout(
+                height=450, template=PLOT_TEMPLATE, margin=dict(t=40, b=40),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
-    # Stats
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Mean Temp", f"{df_filtered['Temp(C)'].mean():.1f}\u00b0C")
-        st.metric("Temp Range", f"{df_filtered['Temp(C)'].min():.1f} — {df_filtered['Temp(C)'].max():.1f}\u00b0C")
-    with col2:
-        st.metric("Mean Humidity", f"{df_filtered['Humidity(%)'].mean():.1f}%")
-        st.metric("Humidity Range", f"{df_filtered['Humidity(%)'].min():.1f} — {df_filtered['Humidity(%)'].max():.1f}%")
+    with right:
+        with st.container(border=True):
+            "### Temperature"
+            st.metric("Mean", f"{df_filtered['Temp(C)'].mean():.1f}\u00b0C")
+            st.metric("Range", f"{df_filtered['Temp(C)'].min():.1f} \u2013 {df_filtered['Temp(C)'].max():.1f}\u00b0C")
+
+        ""
+        with st.container(border=True):
+            "### Humidity"
+            st.metric("Mean", f"{df_filtered['Humidity(%)'].mean():.1f}%")
+            st.metric("Range", f"{df_filtered['Humidity(%)'].min():.1f} \u2013 {df_filtered['Humidity(%)'].max():.1f}%")
 
 # =============================================
-# CORRELATION & STATS VIEW
+# CORRELATION & STATS
 # =============================================
 elif view_mode == "Correlation & Stats":
-    st.subheader("Statistical Analysis")
+    "## Statistical Analysis"
+    ""
 
     from scipy import stats as sp_stats
 
@@ -347,14 +293,16 @@ elif view_mode == "Correlation & Stats":
         rates[f"{col}_rate"] = rates[col].diff(4) / 4
     rates = rates.dropna(subset=["Green_rate", "Blue_rate", "Control_rate"])
 
-    col1, col2, col3 = st.columns(3)
-    for i, (ch, container) in enumerate(zip(["Green", "Blue", "Control"], [col1, col2, col3])):
-        with container:
-            st.metric(f"{ch} Mean Rate", f"{rates[f'{ch}_rate'].mean():.3f} ADC/sample")
-            st.metric(f"{ch} Std Dev", f"{rates[f'{ch}_rate'].std():.3f}")
+    rate_cols = st.columns(3, gap="medium")
+    for i, ch in enumerate(["Green", "Blue", "Control"]):
+        with rate_cols[i]:
+            with st.container(border=True):
+                f"### {ch}"
+                st.metric("Mean Rate", f"{rates[f'{ch}_rate'].mean():.3f} ADC/sample")
+                st.metric("Std Dev", f"{rates[f'{ch}_rate'].std():.3f}")
 
-    st.markdown("---")
-    st.subheader("Welch's t-test Results")
+    ""
+    "### Welch's t-test"
 
     tests = [
         ("Green vs Blue", "Green_rate", "Blue_rate"),
@@ -366,55 +314,62 @@ elif view_mode == "Correlation & Stats":
         t, p = sp_stats.ttest_ind(rates[a], rates[b], equal_var=False)
         sig = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
         results.append({"Comparison": name, "t-statistic": f"{t:.3f}", "p-value": f"{p:.6f}", "Significance": sig})
-    st.table(pd.DataFrame(results))
 
-    # Box plot
-    fig_box = go.Figure()
-    for col, color, name in [("Green_rate", COLORS["Green"], "Green"), ("Blue_rate", COLORS["Blue"], "Blue"), ("Control_rate", COLORS["Control"], "Control")]:
-        fig_box.add_trace(go.Box(y=rates[col], name=name, marker_color=color))
-    fig_box.update_layout(title="Growth Rate Distribution by Group", yaxis_title="Rate (ADC/sample)",
-                          height=450, template=PLOT_TEMPLATE)
-    st.plotly_chart(fig_box, use_container_width=True)
+    with st.container(border=True):
+        st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
 
-    # Separate correlation matrices per chamber
-    st.markdown("---")
-    st.subheader("Correlation Matrices by Chamber")
-    st.caption("ADC values capped at harvest threshold after first crossing to remove oscillation artefacts.")
+    ""
+    left, right = st.columns(2, gap="medium")
 
-    # Prepare capped ADC for correlation
-    df_corr = df[["Timestamp", "Temp(C)", "Humidity(%)"]].copy()
-    for ch in ["Green", "Blue", "Control"]:
-        thresh = HARVEST_THRESH[ch]
-        capped = df[ch].copy()
-        first_cross = df[df[ch] >= thresh].index
-        if len(first_cross) > 0:
-            capped.iloc[first_cross[0]:] = capped.iloc[first_cross[0]:].clip(lower=thresh)
-        df_corr[f"{ch}_ADC"] = capped
-        df_corr[f"{ch}_Length"] = df[f"{ch}_Length"]
+    with left:
+        with st.container(border=True):
+            "### Growth Rate Distribution"
+            fig_box = go.Figure()
+            for col, color, name in [("Green_rate", COLORS["Green"], "Green"), ("Blue_rate", COLORS["Blue"], "Blue"), ("Control_rate", COLORS["Control"], "Control")]:
+                fig_box.add_trace(go.Box(y=rates[col], name=name, marker_color=color))
+            fig_box.update_layout(
+                yaxis_title="Rate (ADC/sample)", height=400, template=PLOT_TEMPLATE,
+                margin=dict(t=20, b=40),
+            )
+            st.plotly_chart(fig_box, use_container_width=True)
 
-    cols = st.columns(3)
-    for i, ch in enumerate(["Green", "Blue", "Control"]):
-        corr_cols = [f"{ch}_ADC", f"{ch}_Length", "Temp(C)", "Humidity(%)"]
-        labels = [f"{ch} ADC", f"{ch} Length", "Temp", "Humidity"]
-        corr = df_corr[corr_cols].dropna().corr()
+    with right:
+        with st.container(border=True):
+            "### Correlation Matrices"
+            st.caption("ADC capped at harvest threshold to remove oscillation artefacts.")
 
-        fig_corr = px.imshow(
-            corr.values, text_auto=".2f", color_continuous_scale="RdBu_r",
-            zmin=-1, zmax=1, x=labels, y=labels,
-            title=f"{ch} Chamber"
-        )
-        fig_corr.update_layout(height=380, width=380)
-        with cols[i]:
+            # Prepare capped ADC
+            df_corr = df[["Timestamp", "Temp(C)", "Humidity(%)"]].copy()
+            for ch in ["Green", "Blue", "Control"]:
+                capped = df[ch].copy()
+                first_cross = df[df[ch] >= HARVEST_THRESH[ch]].index
+                if len(first_cross) > 0:
+                    capped.iloc[first_cross[0]:] = capped.iloc[first_cross[0]:].clip(lower=HARVEST_THRESH[ch])
+                df_corr[f"{ch}_ADC"] = capped
+                df_corr[f"{ch}_Length"] = df[f"{ch}_Length"]
+
+            sel_ch = st.selectbox("Chamber", ["Green", "Blue", "Control"])
+            corr_cols = [f"{sel_ch}_ADC", f"{sel_ch}_Length", "Temp(C)", "Humidity(%)"]
+            labels = [f"{sel_ch} ADC", f"{sel_ch} Length", "Temp", "Humidity"]
+            corr = df_corr[corr_cols].dropna().corr()
+
+            fig_corr = px.imshow(
+                corr.values, text_auto=".2f", color_continuous_scale="RdBu_r",
+                zmin=-1, zmax=1, x=labels, y=labels,
+            )
+            fig_corr.update_layout(height=350, margin=dict(t=20, b=20))
             st.plotly_chart(fig_corr, use_container_width=True)
 
-# --- Footer ---
-st.markdown("---")
-st.markdown(
-    f"**Data Source**: {data_source} | ESP32 + Photoresistors + DHT11 \u2192 Google Sheets \u2192 Dashboard | "
-    f"Auto-refreshes every 5 minutes"
+# =============================================
+# FOOTER
+# =============================================
+""
+"---"
+st.caption(
+    f"**Data**: {data_source} | ESP32 + Photoresistors + DHT11 \u2192 Google Sheets \u2192 Dashboard | "
+    f"Auto-refreshes every 5 min"
 )
 
-# Raw data viewer
-with st.expander("\U0001F4CA View Raw Data"):
-    st.dataframe(df, use_container_width=True)
+with st.expander("View Raw Data"):
+    st.dataframe(df, use_container_width=True, hide_index=True)
     st.caption(f"{len(df)} data points | Last reading: {df['Timestamp'].max()}")
