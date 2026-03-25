@@ -22,7 +22,7 @@ st.set_page_config(
 # Green gradient sidebar
 st.markdown("""<style>
 section[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #1b5e20 0%, #2e7d32 40%, #43a047 100%);
+    background: linear-gradient(180deg, #2e7d32 0%, #43a047 40%, #66bb6a 100%);
 }
 section[data-testid="stSidebar"] * { color: #e8f5e9 !important; }
 section[data-testid="stSidebar"] button,
